@@ -1,4 +1,4 @@
-const { Subscriber } = require('../models/Subscriber');
+const supabase = require('../lib/supabase');
 const ApiError = require('../utils/ApiError');
 const catchAsync = require('../utils/catchAsync');
 const nodemailer = require('nodemailer');
@@ -6,28 +6,29 @@ const nodemailer = require('nodemailer');
 const subscribe = catchAsync(async (req, res) => {
     const { email, source = 'unknown' } = req.body;
 
-    let subscriber = await Subscriber.findOne({ email });
-    if (subscriber) {
-        if (subscriber.isActive) {
+    // Check if exists
+    const { data: existing } = await supabase
+        .from('subscribers')
+        .select('*')
+        .eq('email', email)
+        .single();
+
+    if (existing) {
+        if (existing.is_active) {
             throw new ApiError(400, 'Already subscribed');
         }
-        subscriber.isActive = true;
-        subscriber.source = source;
-        await subscriber.save();
+        await supabase.from('subscribers').update({ is_active: true, source }).eq('email', email);
     } else {
-        subscriber = await Subscriber.create({ email, source });
+        await supabase.from('subscribers').insert({ email, source });
     }
 
-    // Send welcome email (optional - can fail silently in development)
+    // Send welcome email (optional)
     try {
         if (process.env.EMAIL_HOST && process.env.EMAIL_USER) {
             const transporter = nodemailer.createTransport({
                 host: process.env.EMAIL_HOST,
                 port: process.env.EMAIL_PORT,
-                auth: {
-                    user: process.env.EMAIL_USER,
-                    pass: process.env.EMAIL_PASS,
-                },
+                auth: { user: process.env.EMAIL_USER, pass: process.env.EMAIL_PASS },
             });
 
             await transporter.sendMail({
@@ -39,43 +40,37 @@ const subscribe = catchAsync(async (req, res) => {
         }
     } catch (emailError) {
         console.error('Email sending failed:', emailError.message);
-        // Don't fail the subscription if email fails
     }
 
-    res.status(201).send({ message: 'Subscribed successfully', data: subscriber });
+    res.status(201).json({ success: true, message: 'Subscribed successfully' });
 });
 
 const unsubscribe = catchAsync(async (req, res) => {
     const { email } = req.body;
-    const subscriber = await Subscriber.findOne({ email });
-    if (subscriber) {
-        subscriber.isActive = false;
-        await subscriber.save();
-    }
-    res.send({ message: 'Unsubscribed successfully' });
+    await supabase.from('subscribers').update({ is_active: false }).eq('email', email);
+    res.json({ success: true, message: 'Unsubscribed successfully' });
 });
 
 const getAllSubscribers = catchAsync(async (req, res) => {
     const { page = 1, limit = 50, active } = req.query;
-    const skip = (page - 1) * limit;
+    let query = supabase.from('subscribers').select('*', { count: 'exact' });
 
-    const filter = {};
-    if (active !== undefined) filter.isActive = active === 'true';
+    if (active !== undefined) query = query.eq('is_active', active === 'true');
 
-    const subscribers = await Subscriber.find(filter)
-        .sort({ createdAt: -1 })
-        .skip(skip)
-        .limit(parseInt(limit));
+    const from = (page - 1) * limit;
+    const to = from + limit - 1;
+    const { data, error, count } = await query.order('created_at', { ascending: false }).range(from, to);
 
-    const total = await Subscriber.countDocuments(filter);
+    if (error) throw new ApiError(500, error.message);
 
-    res.send({
-        data: subscribers,
+    res.json({
+        success: true,
+        data,
         pagination: {
-            total,
+            total: count,
             page: parseInt(page),
             limit: parseInt(limit),
-            totalPages: Math.ceil(total / limit)
+            totalPages: Math.ceil((count || 0) / limit)
         }
     });
 });

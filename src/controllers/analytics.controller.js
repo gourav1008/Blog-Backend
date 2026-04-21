@@ -1,93 +1,78 @@
-const { Analytics, Subscriber } = require('../models/Subscriber');
-const Post = require('../models/Post');
-const User = require('../models/User');
-const Comment = require('../models/Comment');
-const { Category } = require('../models/Category');
+const supabase = require('../lib/supabase');
 const catchAsync = require('../utils/catchAsync');
+const ApiError = require('../utils/ApiError');
 
 const getPostStats = catchAsync(async (req, res) => {
-    const stats = await Analytics.find({ post: req.params.postId }).sort({ date: -1 });
-    res.send(stats);
+    // In our simplified Supabase schema, we don't have a separate analytics table for daily views yet.
+    // However, we can return the current view_count and potentially recent comments as a proxy.
+    const { data: post, error } = await supabase
+        .from('posts')
+        .select('view_count, created_at')
+        .eq('id', req.params.postId)
+        .single();
+    
+    if (error) throw new ApiError(500, error.message);
+    res.json({ success: true, data: { views: post.view_count, date: post.created_at } });
 });
 
 const getTrendingPosts = catchAsync(async (req, res) => {
-    // Simple trending logic: posts with most views in the last 7 days
-    const sevenDaysAgo = new Date();
-    sevenDaysAgo.setDate(sevenDaysAgo.getDate() - 7);
+    // Trending = most views overall (simplified from 7-day trend due to lack of daily logs)
+    const { data, error } = await supabase
+        .from('posts')
+        .select('id, title, slug, view_count, featured_image, excerpt')
+        .eq('status', 'published')
+        .eq('is_deleted', false)
+        .order('view_count', { ascending: false })
+        .limit(5);
 
-    const trending = await Analytics.aggregate([
-        { $match: { date: { $gte: sevenDaysAgo } } },
-        { $group: { _id: '$post', totalViews: { $sum: '$views' } } },
-        { $sort: { totalViews: -1 } },
-        { $limit: 5 },
-        { $lookup: { from: 'posts', localField: '_id', foreignField: '_id', as: 'post' } },
-        { $unwind: '$post' }
-    ]);
-
-    res.send(trending);
+    if (error) throw new ApiError(500, error.message);
+    res.json({ success: true, data });
 });
 
 const getDashboardStats = catchAsync(async (req, res) => {
-    // Get overall platform stats
     const [
-        totalPosts,
-        totalUsers,
-        totalComments,
-        totalSubscribers,
-        publishedPosts,
-        draftPosts
+        { count: totalPosts },
+        { count: totalUsers },
+        { count: totalComments },
+        { count: totalSubscribers },
+        { count: publishedPosts },
+        { count: draftPosts }
     ] = await Promise.all([
-        Post.countDocuments({ isDeleted: false }),
-        User.countDocuments(),
-        Comment.countDocuments({ isDeleted: false }),
-        Subscriber.countDocuments({ isActive: true }),
-        Post.countDocuments({ isDeleted: false, status: 'published' }),
-        Post.countDocuments({ isDeleted: false, status: 'draft' })
+        supabase.from('posts').select('*', { count: 'exact', head: true }).eq('is_deleted', false),
+        supabase.from('users').select('*', { count: 'exact', head: true }),
+        supabase.from('comments').select('*', { count: 'exact', head: true }).eq('is_deleted', false),
+        supabase.from('subscribers').select('*', { count: 'exact', head: true }).eq('is_active', true),
+        supabase.from('posts').select('*', { count: 'exact', head: true }).eq('is_deleted', false, 'status', 'published'),
+        supabase.from('posts').select('*', { count: 'exact', head: true }).eq('is_deleted', false, 'status', 'draft')
     ]);
 
-    // Get total views from all posts
-    const totalViews = await Post.aggregate([
-        { $match: { isDeleted: false } },
-        { $group: { _id: null, total: { $sum: '$viewCount' } } }
-    ]);
-
-    // Get popular categories
-    const popularCategories = await Post.aggregate([
-        { $match: { isDeleted: false, status: 'published' } },
-        { $group: { _id: '$category', count: { $sum: 1 } } },
-        { $sort: { count: -1 } },
-        { $limit: 5 },
-        { $lookup: { from: 'categories', localField: '_id', foreignField: '_id', as: 'category' } },
-        { $unwind: '$category' },
-        { $project: { name: '$category.name', count: 1 } }
-    ]);
+    const { data: viewData } = await supabase.from('posts').select('view_count').eq('is_deleted', false);
+    const totalViews = (viewData || []).reduce((acc, p) => acc + (p.view_count || 0), 0);
 
     // Recent activity - last 7 days
     const sevenDaysAgo = new Date();
     sevenDaysAgo.setDate(sevenDaysAgo.getDate() - 7);
+    const dateStr = sevenDaysAgo.toISOString();
 
-    const recentPosts = await Post.countDocuments({
-        createdAt: { $gte: sevenDaysAgo },
-        isDeleted: false
-    });
+    const [
+        { count: recentPosts },
+        { count: recentComments },
+        { count: recentSubscribers }
+    ] = await Promise.all([
+        supabase.from('posts').select('*', { count: 'exact', head: true }).gte('created_at', dateStr).eq('is_deleted', false),
+        supabase.from('comments').select('*', { count: 'exact', head: true }).gte('created_at', dateStr).eq('is_deleted', false),
+        supabase.from('subscribers').select('*', { count: 'exact', head: true }).gte('created_at', dateStr)
+    ]);
 
-    const recentComments = await Comment.countDocuments({
-        createdAt: { $gte: sevenDaysAgo },
-        isDeleted: false
-    });
-
-    const recentSubscribers = await Subscriber.countDocuments({
-        createdAt: { $gte: sevenDaysAgo }
-    });
-
-    res.send({
+    res.json({
+        success: true,
         data: {
             overview: {
                 totalPosts,
                 totalUsers,
                 totalComments,
                 totalSubscribers,
-                totalViews: totalViews[0]?.total || 0,
+                totalViews,
                 publishedPosts,
                 draftPosts
             },
@@ -95,8 +80,7 @@ const getDashboardStats = catchAsync(async (req, res) => {
                 newPostsLast7Days: recentPosts,
                 newCommentsLast7Days: recentComments,
                 newSubscribersLast7Days: recentSubscribers
-            },
-            popularCategories
+            }
         }
     });
 });

@@ -7,16 +7,36 @@ const cookieParser = require('cookie-parser');
 const logger = require('./config/logger');
 const { errorConverter, errorHandler } = require('./middleware/error');
 const ApiError = require('./utils/ApiError');
+const { ClerkExpressWithAuth } = require('@clerk/clerk-sdk-node');
 const routes = require('./routes/v1');
 
 const app = express();
 
+// Clerk authentication middleware (adds req.auth)
+app.use(ClerkExpressWithAuth());
+
 // Security middleware
 app.use(helmet());
+
+// Cross-Origin Resource Sharing
 app.use(cors({
-    origin: process.env.CORS_ORIGIN || '*',
-    credentials: true
+    origin: process.env.CORS_ORIGIN ? process.env.CORS_ORIGIN.split(',') : (process.env.NODE_ENV === 'production' ? false : '*'),
+    credentials: true,
+    methods: ['GET', 'POST', 'PUT', 'DELETE', 'PATCH', 'OPTIONS'],
+    allowedHeaders: ['Content-Type', 'Authorization', 'X-Requested-With', 'Accept']
 }));
+
+// Rate Limiting
+const rateLimit = require('express-rate-limit');
+const apiLimiter = rateLimit({
+    windowMs: 15 * 60 * 1000, // 15 minutes
+    max: process.env.NODE_ENV === 'production' ? 100 : 1000, // Limit each IP to 100 requests per windowMs in prod
+    message: 'Too many requests from this IP, please try again after 15 minutes',
+    standardHeaders: true, 
+    legacyHeaders: false, 
+});
+// Apply the rate limiting middleware to API calls only
+app.use('/api', apiLimiter);
 
 // Request logging
 app.use(morgan('combined', { stream: { write: (message) => logger.info(message.trim()) } }));

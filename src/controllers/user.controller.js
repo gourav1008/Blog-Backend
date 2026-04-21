@@ -1,156 +1,148 @@
-const User = require('../models/User');
-const Post = require('../models/Post');
-const Comment = require('../models/Comment');
+const supabase = require('../lib/supabase');
 const ApiError = require('../utils/ApiError');
 const catchAsync = require('../utils/catchAsync');
 
-const getProfile = catchAsync(async (req, res) => {
-    const user = await User.findById(req.user.id)
-        .populate({
-            path: 'bookmarks',
-            populate: [
-                { path: 'author', select: 'name avatar' },
-                { path: 'category', select: 'name slug' }
-            ]
-        })
-        .select('-password');
+const POST_SELECT = `
+  id, title, slug, content, excerpt, featured_image, status,
+  is_featured, is_premium, is_sponsored, view_count, publish_date,
+  author:users!author_id (id, name, email, avatar, bio, role),
+  category:categories!category_id (id, name, slug, description)
+`;
 
-    if (!user) {
+const getProfile = catchAsync(async (req, res) => {
+    const { data, error } = await supabase
+        .from('users')
+        .select('*')
+        .eq('id', req.user.id)
+        .single();
+
+    if (error || !data) {
         throw new ApiError(404, 'User not found');
     }
 
-    res.send({ data: user });
+    res.json({ success: true, data });
 });
 
 const updateProfile = catchAsync(async (req, res) => {
-    // Prevent updating sensitive fields
-    const allowedUpdates = ['name', 'bio', 'avatar'];
-    const updates = {};
+    const { name, bio, avatar } = req.body;
+    const { data, error } = await supabase
+        .from('users')
+        .update({ name, bio, avatar, updated_at: new Date().toISOString() })
+        .eq('id', req.user.id)
+        .select()
+        .single();
 
-    Object.keys(req.body).forEach(key => {
-        if (allowedUpdates.includes(key)) {
-            updates[key] = req.body[key];
-        }
-    });
-
-    const user = await User.findByIdAndUpdate(
-        req.user.id,
-        updates,
-        { new: true, runValidators: true }
-    ).select('-password');
-
-    res.send({ data: user });
+    if (error) throw new ApiError(400, error.message);
+    res.json({ success: true, data });
 });
 
 const getBookmarks = catchAsync(async (req, res) => {
-    const user = await User.findById(req.user.id).populate({
-        path: 'bookmarks',
-        match: { isDeleted: false, status: 'published' },
-        populate: [
-            { path: 'author', select: 'name avatar' },
-            { path: 'category', select: 'name slug' }
-        ]
-    });
+    const { data, error } = await supabase
+        .from('bookmarks')
+        .select(`post:${POST_SELECT}`)
+        .eq('user_id', req.user.id);
 
-    res.send({ data: user.bookmarks });
+    if (error) throw new ApiError(500, error.message);
+    res.json({ success: true, data: data.map(b => b.post) });
 });
 
 const addBookmark = catchAsync(async (req, res) => {
     const { postId } = req.params;
-    const user = await User.findById(req.user.id);
+    const { error } = await supabase
+        .from('bookmarks')
+        .insert({ user_id: req.user.id, post_id: postId });
 
-    if (!user) {
-        throw new ApiError(404, 'User not found');
-    }
-
-    // Check if post exists
-    const post = await Post.findById(postId);
-    if (!post) {
-        throw new ApiError(404, 'Post not found');
-    }
-
-    // Add bookmark if not already bookmarked
-    if (!user.bookmarks.includes(postId)) {
-        user.bookmarks.push(postId);
-        await user.save();
-    }
-
-    res.send({ message: 'Post bookmarked successfully', bookmarked: true });
+    if (error && error.code !== '23505') throw new ApiError(400, error.message);
+    res.json({ success: true, message: 'Post bookmarked successfully', bookmarked: true });
 });
 
 const removeBookmark = catchAsync(async (req, res) => {
     const { postId } = req.params;
-    const user = await User.findById(req.user.id);
+    const { error } = await supabase
+        .from('bookmarks')
+        .delete()
+        .eq('user_id', req.user.id)
+        .eq('post_id', postId);
 
-    if (!user) {
-        throw new ApiError(404, 'User not found');
-    }
-
-    user.bookmarks = user.bookmarks.filter(id => id.toString() !== postId);
-    await user.save();
-
-    res.send({ message: 'Bookmark removed successfully', bookmarked: false });
+    if (error) throw new ApiError(400, error.message);
+    res.json({ success: true, message: 'Bookmark removed successfully', bookmarked: false });
 });
 
 const getUserPosts = catchAsync(async (req, res) => {
     const { userId } = req.params;
+    const { data, error } = await supabase
+        .from('posts')
+        .select(POST_SELECT)
+        .eq('author_id', userId)
+        .eq('is_deleted', false)
+        .eq('status', 'published')
+        .order('created_at', { ascending: false });
 
-    const posts = await Post.find({
-        author: userId,
-        isDeleted: false,
-        status: 'published'
-    })
-        .populate('author', 'name avatar')
-        .populate('category', 'name slug')
-        .sort({ createdAt: -1 });
-
-    res.send({ data: posts });
+    if (error) throw new ApiError(500, error.message);
+    res.json({ success: true, data });
 });
 
 const getUserComments = catchAsync(async (req, res) => {
-    const comments = await Comment.find({
-        author: req.user.id,
-        isDeleted: false
-    })
-        .populate('post', 'title slug')
-        .populate('author', 'name avatar')
-        .sort({ createdAt: -1 })
-        .limit(50);
+    const { data, error } = await supabase
+        .from('comments')
+        .select(`
+            id, content, created_at,
+            post:posts!post_id (id, title, slug)
+        `)
+        .eq('user_id', req.user.id)
+        .eq('is_deleted', false)
+        .order('created_at', { ascending: false });
 
-    res.send({ data: comments });
+    if (error) throw new ApiError(500, error.message);
+    res.json({ success: true, data });
+});
+
+const getLikedPosts = catchAsync(async (req, res) => {
+    const { data, error } = await supabase
+        .from('likes')
+        .select(`post:${POST_SELECT}`)
+        .eq('user_id', req.user.id);
+
+    if (error) throw new ApiError(500, error.message);
+    res.json({ success: true, data: data.map(l => l.post) });
 });
 
 const banUser = catchAsync(async (req, res) => {
-    const user = await User.findById(req.params.userId);
+    const { userId } = req.params;
+    // Get current status
+    const { data: user } = await supabase.from('users').select('is_banned').eq('id', userId).single();
     if (!user) throw new ApiError(404, 'User not found');
 
-    user.isBanned = !user.isBanned;
-    await user.save();
-    res.send({ message: `User ${user.isBanned ? 'banned' : 'unbanned'} successfully` });
+    const { error } = await supabase
+        .from('users')
+        .update({ is_banned: !user.is_banned })
+        .eq('id', userId);
+
+    if (error) throw new ApiError(400, error.message);
+    res.json({ success: true, message: `User ${!user.is_banned ? 'banned' : 'unbanned'} successfully` });
 });
 
 const getAllUsers = catchAsync(async (req, res) => {
-    const { page = 1, limit = 20, role } = req.query;
-    const skip = (page - 1) * limit;
+    const { role, page = 1, limit = 20 } = req.query;
+    let query = supabase.from('users').select('*', { count: 'exact' });
 
-    const filter = {};
-    if (role) filter.role = role;
+    if (role) query = query.eq('role', role);
 
-    const users = await User.find(filter)
-        .select('-password -refreshToken')
-        .sort({ createdAt: -1 })
-        .skip(skip)
-        .limit(parseInt(limit));
+    const from = (page - 1) * limit;
+    const to = from + limit - 1;
+    query = query.order('created_at', { ascending: false }).range(from, to);
 
-    const total = await User.countDocuments(filter);
+    const { data, error, count } = await query;
+    if (error) throw new ApiError(500, error.message);
 
-    res.send({
-        data: users,
+    res.json({
+        success: true,
+        data,
         pagination: {
-            total,
+            total: count,
             page: parseInt(page),
             limit: parseInt(limit),
-            totalPages: Math.ceil(total / limit)
+            totalPages: Math.ceil((count || 0) / limit)
         }
     });
 });
@@ -159,21 +151,15 @@ const updateUserRole = catchAsync(async (req, res) => {
     const { userId } = req.params;
     const { role } = req.body;
 
-    if (!['user', 'editor', 'admin'].includes(role)) {
-        throw new ApiError(400, 'Invalid role');
-    }
+    const { data, error } = await supabase
+        .from('users')
+        .update({ role })
+        .eq('id', userId)
+        .select()
+        .single();
 
-    const user = await User.findByIdAndUpdate(
-        userId,
-        { role },
-        { new: true }
-    ).select('-password -refreshToken');
-
-    if (!user) {
-        throw new ApiError(404, 'User not found');
-    }
-
-    res.send({ data: user, message: 'User role updated successfully' });
+    if (error) throw new ApiError(400, error.message);
+    res.json({ success: true, data, message: 'User role updated successfully' });
 });
 
 module.exports = {
@@ -184,6 +170,7 @@ module.exports = {
     removeBookmark,
     getUserPosts,
     getUserComments,
+    getLikedPosts,
     banUser,
     getAllUsers,
     updateUserRole,

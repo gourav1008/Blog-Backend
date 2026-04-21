@@ -3,7 +3,8 @@ const mongoose = require('mongoose');
 const User = require('../models/User');
 const bcrypt = require('bcryptjs');
 const Post = require('../models/Post');
-const { Category, Tag } = require('../models/Category');
+const { Category } = require('../models/Category');
+const Tag = require('../models/Tag');
 const Comment = require('../models/Comment');
 const { Subscriber, Analytics } = require('../models/Subscriber');
 
@@ -349,11 +350,7 @@ const seedDatabase = async () => {
         // Check if data already exists
         const existingPosts = await Post.countDocuments();
         if (existingPosts > 0) {
-            console.log('⚠️  Database already contains data.');
-            console.log(`   Found ${existingPosts} posts.`);
-            console.log('   Skipping seed to preserve existing data.\n');
-            console.log('   To reseed, manually clear the database first.\n');
-            return;
+            console.log('⚠️  Database already contains data. Forcing reseed...\n');
         }
 
         // Clear existing data (safety check passed)

@@ -1,99 +1,100 @@
-const Post = require('../models/Post');
 const ApiError = require('../utils/ApiError');
 const catchAsync = require('../utils/catchAsync');
 const postService = require('../services/post.service');
 
 const createPost = catchAsync(async (req, res) => {
-    const post = await postService.createPost({ ...req.body, author: req.user.id });
-    res.status(201).json({ data: post });
+    const { tags, ...body } = req.body;
+    const post = await postService.createPost({
+        ...body,
+        author_id: req.user.id,
+        tags: tags || [],
+    });
+    res.status(201).json({ success: true, data: post });
 });
 
 const getPosts = catchAsync(async (req, res) => {
-    const filter = {};
-    if (req.query.category) filter.category = req.query.category;
-    if (req.query.tag) filter.tags = req.query.tag;
-    if (req.query.author) filter.author = req.query.author;
-    if (req.query.status) filter.status = req.query.status;
-
-    const options = {
-        sortBy: req.query.sortBy,
-        limit: parseInt(req.query.limit, 10) || 10,
-        page: parseInt(req.query.page, 10) || 1,
+    const isAdmin = req.user && ['admin', 'editor'].includes(req.user.role);
+    const result = await postService.queryPosts({
+        status: req.query.status,
+        categorySlug: req.query.category,
+        tagSlug: req.query.tag,
+        authorId: req.query.author,
         search: req.query.search,
-    };
-
-    const result = await postService.queryPosts(filter, options);
-    res.send({ data: result });
+        sortBy: req.query.sortBy || 'latest',
+        page: parseInt(req.query.page, 10) || 1,
+        limit: parseInt(req.query.limit, 10) || 10,
+        isAdmin,
+    });
+    res.json({ success: true, data: result });
 });
 
 const getPostBySlug = catchAsync(async (req, res) => {
     const post = await postService.getPostBySlug(req.params.slug);
-    if (!post) {
-        throw new ApiError(404, 'Post not found');
-    }
-    res.send({ data: post });
+    res.json({ success: true, data: post });
 });
 
 const updatePost = catchAsync(async (req, res) => {
-    const post = await postService.updatePostById(req.params.postId, req.body, req.user);
-    res.send(post);
+    const post = await postService.updatePost(req.params.postId, req.body, req.user);
+    res.json({ success: true, data: post });
 });
 
 const deletePost = catchAsync(async (req, res) => {
-    await postService.deletePostById(req.params.postId, req.user);
+    await postService.deletePost(req.params.postId, req.user);
     res.status(204).send();
 });
 
 const getFeaturedPosts = catchAsync(async (req, res) => {
     const posts = await postService.getFeaturedPosts();
-    res.send({ data: posts });
+    res.json({ success: true, data: posts });
 });
 
 const getTrendingPosts = catchAsync(async (req, res) => {
     const posts = await postService.getTrendingPosts();
-    res.send({ data: posts });
+    res.json({ success: true, data: posts });
+});
+
+const likePost = catchAsync(async (req, res) => {
+    const result = await postService.likePost(req.params.postId, req.user.id);
+    res.json({ success: true, data: result });
+});
+
+const unlikePost = catchAsync(async (req, res) => {
+    const result = await postService.unlikePost(req.params.postId, req.user.id);
+    res.json({ success: true, data: result });
+});
+
+const getPost = catchAsync(async (req, res) => {
+    const post = await postService.getPostById(req.params.postId);
+    res.json({ success: true, data: post });
 });
 
 const searchPosts = catchAsync(async (req, res) => {
-    const { q } = req.query;
-    if (!q) {
-        throw new ApiError(400, 'Search query is required');
-    }
-
-    const options = {
-        limit: parseInt(req.query.limit, 10) || 10,
-        page: parseInt(req.query.page, 10) || 1,
-    };
-
-    const result = await postService.searchPosts(q, options);
-    res.send({ data: result });
+    // searchPosts is effectively the same as getPosts with a search query
+    return getPosts(req, res);
 });
 
 const getRelatedPosts = catchAsync(async (req, res) => {
     const posts = await postService.getRelatedPosts(req.params.postId);
-    res.send({ data: posts });
+    res.json({ success: true, data: posts });
 });
 
-const likePost = catchAsync(async (req, res) => {
-    const result = await postService.toggleLike(req.params.postId, req.user.id);
-    res.send(result);
-});
-
-const unlikePost = catchAsync(async (req, res) => {
-    const result = await postService.toggleLike(req.params.postId, req.user.id);
-    res.send(result);
+const getAllTags = catchAsync(async (req, res) => {
+    const tags = await postService.getTags();
+    res.json({ success: true, data: tags });
 });
 
 module.exports = {
     createPost,
     getPosts,
+    getPost,
     getPostBySlug,
+    searchPosts,
+    getRelatedPosts,
+    getAllTags,
     updatePost,
     deletePost,
     getFeaturedPosts,
     getTrendingPosts,
-    searchPosts,
-    getRelatedPosts,
     likePost,
     unlikePost,
 };

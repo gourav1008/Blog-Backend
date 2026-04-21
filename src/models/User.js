@@ -47,6 +47,13 @@ const userSchema = new mongoose.Schema({
         default: 'free',
     },
     refreshToken: String,
+    isVerified: {
+        type: Boolean,
+        default: false,
+    },
+    verificationToken: String,
+    resetPasswordToken: String,
+    resetPasswordExpires: Date,
 }, {
     timestamps: true,
 });
@@ -58,8 +65,8 @@ userSchema.pre('save', async function (next) {
 });
 
 // Method to compare password
-userSchema.methods.comparePassword = async function (candidatePassword, userPassword) {
-    return await bcrypt.compare(candidatePassword, userPassword);
+userSchema.methods.comparePassword = async function (candidatePassword) {
+    return await bcrypt.compare(candidatePassword, this.password);
 };
 
 const User = mongoose.model('User', userSchema);

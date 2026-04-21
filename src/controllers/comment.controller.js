@@ -1,51 +1,93 @@
-const Comment = require('../models/Comment');
-const Post = require('../models/Post');
+const supabase = require('../lib/supabase');
 const ApiError = require('../utils/ApiError');
 const catchAsync = require('../utils/catchAsync');
 
-const createComment = catchAsync(async (req, res) => {
-    const { content, postId, parentCommentId } = req.body;
-    const comment = await Comment.create({
-        content,
-        post: postId,
-        author: req.user.id,
-        parentComment: parentCommentId || null,
-    });
+const getCommentsByPost = catchAsync(async (req, res) => {
+    const { data, error } = await supabase
+        .from('comments')
+        .select(`
+            id, content, is_edited, created_at, updated_at, parent_comment_id,
+            author:users!user_id (id, name, avatar)
+        `)
+        .eq('post_id', req.params.postId)
+        .eq('is_deleted', false)
+        .is('parent_comment_id', null)
+        .order('created_at', { ascending: true });
 
-    if (parentCommentId) {
-        await Comment.findByIdAndUpdate(parentCommentId, {
-            $push: { replies: comment._id }
-        });
-    }
+    if (error) throw new ApiError(500, error.message);
 
-    res.status(201).send(comment);
+    // Fetch replies for each top-level comment
+    const withReplies = await Promise.all(
+        (data || []).map(async (comment) => {
+            const { data: replies } = await supabase
+                .from('comments')
+                .select('id, content, is_edited, created_at, author:users!user_id (id, name, avatar)')
+                .eq('parent_comment_id', comment.id)
+                .eq('is_deleted', false)
+                .order('created_at', { ascending: true });
+            return { ...comment, replies: replies || [] };
+        })
+    );
+
+    res.json({ success: true, data: withReplies });
 });
 
-const getCommentsByPost = catchAsync(async (req, res) => {
-    const comments = await Comment.find({ post: req.params.postId, parentComment: null, isDeleted: false })
-        .populate({
-            path: 'replies',
-            populate: { path: 'author', select: 'name avatar' }
+const createComment = catchAsync(async (req, res) => {
+    const { content, parentId } = req.body;
+    const { postId } = req.params;
+
+    const { data, error } = await supabase
+        .from('comments')
+        .insert({
+            post_id: postId,
+            user_id: req.user.id,
+            content,
+            parent_comment_id: parentId || null,
         })
-        .populate('author', 'name avatar');
-    res.send(comments);
+        .select(`id, content, created_at, author:users!user_id (id, name, avatar)`)
+        .single();
+
+    if (error) throw new ApiError(400, error.message);
+    res.status(201).json({ success: true, data });
+});
+
+const updateComment = catchAsync(async (req, res) => {
+    const { data: existing } = await supabase
+        .from('comments')
+        .select('user_id')
+        .eq('id', req.params.commentId)
+        .single();
+
+    if (!existing) throw new ApiError(404, 'Comment not found');
+    if (existing.user_id !== req.user.id && req.user.role !== 'admin') {
+        throw new ApiError(403, 'You cannot edit this comment');
+    }
+
+    const { data, error } = await supabase
+        .from('comments')
+        .update({ content: req.body.content, is_edited: true })
+        .eq('id', req.params.commentId)
+        .select()
+        .single();
+
+    if (error) throw new ApiError(400, error.message);
+    res.json({ success: true, data });
 });
 
 const deleteComment = catchAsync(async (req, res) => {
-    const comment = await Comment.findById(req.params.commentId);
-    if (!comment) throw new ApiError(404, 'Comment not found');
+    const { data: existing } = await supabase
+        .from('comments')
+        .select('user_id')
+        .eq('id', req.params.commentId)
+        .single();
 
-    if (comment.author.toString() !== req.user.id && req.user.role !== 'admin') {
-        throw new ApiError(403, 'Forbidden');
+    if (!existing) throw new ApiError(404, 'Comment not found');
+    if (existing.user_id !== req.user.id && !['admin', 'editor'].includes(req.user.role)) {
+        throw new ApiError(403, 'You cannot delete this comment');
     }
 
-    comment.isDeleted = true;
-    await comment.save();
+    await supabase.from('comments').update({ is_deleted: true }).eq('id', req.params.commentId);
     res.status(204).send();
 });
 
-module.exports = {
-    createComment,
-    getCommentsByPost,
-    deleteComment,
-};
+module.exports = { getCommentsByPost, createComment, updateComment, deleteComment };

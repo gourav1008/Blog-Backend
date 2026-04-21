@@ -1,6 +1,6 @@
 const express = require('express');
 const multer = require('multer');
-const { auth } = require('../../middleware/auth');
+const { protect } = require('../../middleware/auth');
 const uploadController = require('../../controllers/upload.controller');
 const ApiError = require('../../utils/ApiError');
 
@@ -22,6 +22,6 @@ const upload = multer({
     },
 });
 
-router.post('/image', auth, upload.single('image'), uploadController.uploadSingle);
+router.post('/image', protect, upload.single('image'), uploadController.uploadSingle);
 
 module.exports = router;

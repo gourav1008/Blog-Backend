@@ -7,6 +7,8 @@ const commentRoute = require('./comment.route');
 const newsletterRoute = require('./newsletter.route');
 const analyticsRoute = require('./analytics.route');
 const uploadRoute = require('./upload.route');
+const tagRoute = require('./tag.route');
+const adminRoute = require('./admin.route');
 
 const router = express.Router();
 
@@ -16,7 +18,9 @@ router.use('/users', userRoute);
 router.use('/comments', commentRoute);
 router.use('/newsletter', newsletterRoute);
 router.use('/analytics', analyticsRoute);
+router.use('/admin', adminRoute);
 router.use('/categories', categoryRoute);
 router.use('/upload', uploadRoute);
+router.use('/tags', tagRoute);
 
 module.exports = router;
