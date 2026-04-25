@@ -12,7 +12,24 @@ const routes = require('./routes/v1');
 
 const app = express();
 
+// Root Route - Health Check & API Info (Publicly Accessible)
+app.get('/', (req, res) => {
+    res.status(200).json({
+        message: 'Blog Website API is running',
+        version: '1.0.0',
+        environment: process.env.NODE_ENV,
+        docs: '/api/v1',
+        health: '/health'
+    });
+});
+
+// Health check endpoint for Render (Publicly Accessible)
+app.get('/health', (req, res) => {
+    res.status(200).json({ status: 'OK', timestamp: new Date().toISOString() });
+});
+
 // Clerk authentication middleware (adds req.auth)
+// Version 5.x of @clerk/clerk-sdk-node no longer uses the deprecated getInterstitial()
 app.use(ClerkExpressWithAuth());
 
 // Security middleware
@@ -51,11 +68,6 @@ app.use(compression());
 
 // v1 api routes
 app.use('/api/v1', routes);
-
-// Health check
-app.get('/health', (req, res) => {
-    res.status(200).json({ status: 'OK', timestamp: new Date().toISOString() });
-});
 
 // send back a 404 error for any unknown api request
 app.use((req, res, next) => {

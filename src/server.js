@@ -10,8 +10,12 @@ if (!process.env.SUPABASE_URL || !process.env.SUPABASE_SERVICE_ROLE_KEY || proce
 const port = process.env.PORT || 5000;
 
 let server = app.listen(port, () => {
-    logger.info(`🚀 Server running in ${process.env.NODE_ENV} mode on port ${port}`);
-    logger.info(`📦 Database: Supabase (${process.env.SUPABASE_URL})`);
+    logger.info('----------------------------------------------');
+    logger.info(`🚀 Server is running in ${process.env.NODE_ENV || 'development'} mode`);
+    logger.info(`📡 Listening on port: ${port}`);
+    logger.info(`🔗 URL: http://localhost:${port}`);
+    logger.info(`📦 Database: Supabase (${process.env.SUPABASE_URL || 'Not Configured'})`);
+    logger.info('----------------------------------------------');
 });
 
 const exitHandler = () => {
