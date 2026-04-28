@@ -1,34 +1,49 @@
 require('dotenv').config();
-const mongoose = require('mongoose');
-const User = require('../models/User');
-const Post = require('../models/Post');
-const { Category, Tag } = require('../models/Category');
-const Comment = require('../models/Comment');
-const { Subscriber, Analytics } = require('../models/Subscriber');
+const { createClient } = require('@supabase/supabase-js');
+
+const supabaseUrl = process.env.SUPABASE_URL;
+const supabaseKey = process.env.SUPABASE_SERVICE_ROLE_KEY;
+
+if (!supabaseUrl || !supabaseKey) {
+    console.error('✗ Missing Supabase credentials in .env');
+    process.exit(1);
+}
+
+const supabase = createClient(supabaseUrl, supabaseKey);
 
 const clearDatabase = async () => {
     try {
-        await mongoose.connect(process.env.MONGODB_URI);
-        console.log('✓ MongoDB Connected');
+        console.log('✓ Supabase Connected (Service Role)');
+        console.log('\n🗑️  Clearing Supabase tables...\n');
 
-        console.log('\n🗑️  Clearing database...\n');
+        // Order matters due to foreign key constraints
+        const tables = [
+            'likes',
+            'comments',
+            'bookmarks',
+            'post_tags',
+            'posts',
+            'tags',
+            'categories',
+            'subscribers',
+            'users'
+        ];
 
-        await Promise.all([
-            User.deleteMany({}),
-            Post.deleteMany({}),
-            Category.deleteMany({}),
-            Tag.deleteMany({}),
-            Comment.deleteMany({}),
-            Subscriber.deleteMany({}),
-            Analytics.deleteMany({})
-        ]);
+        for (const table of tables) {
+            console.log(`  - Clearing ${table}...`);
+            const { error } = await supabase
+                .from(table)
+                .delete()
+                .neq('id', '00000000-0000-0000-0000-000000000000'); // Delete all
 
-        console.log('✓ Database cleared successfully!\n');
+            if (error) {
+                console.warn(`  ⚠️  Warning clearing ${table}:`, error.message);
+            }
+        }
 
-        await mongoose.connection.close();
-        process.exit(0);
+        console.log('\n✅ Database cleared successfully!\n');
     } catch (error) {
-        console.error('✗ Error:', error);
+        console.error('✗ Unexpected error:', error);
         process.exit(1);
     }
 };

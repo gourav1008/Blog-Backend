@@ -39,7 +39,7 @@ const updateProfile = catchAsync(async (req, res) => {
 const getBookmarks = catchAsync(async (req, res) => {
     const { data, error } = await supabase
         .from('bookmarks')
-        .select(`post:${POST_SELECT}`)
+        .select(`post:posts!post_id(${POST_SELECT})`)
         .eq('user_id', req.user.id);
 
     if (error) throw new ApiError(500, error.message);
@@ -100,7 +100,7 @@ const getUserComments = catchAsync(async (req, res) => {
 const getLikedPosts = catchAsync(async (req, res) => {
     const { data, error } = await supabase
         .from('likes')
-        .select(`post:${POST_SELECT}`)
+        .select(`post:posts!post_id(${POST_SELECT})`)
         .eq('user_id', req.user.id);
 
     if (error) throw new ApiError(500, error.message);
